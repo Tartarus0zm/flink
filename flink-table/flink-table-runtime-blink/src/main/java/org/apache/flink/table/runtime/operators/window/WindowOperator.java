@@ -18,6 +18,8 @@
 
 package org.apache.flink.table.runtime.operators.window;
 
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MergingState;
 import org.apache.flink.api.common.state.State;
 import org.apache.flink.api.common.state.StateDescriptor;
@@ -39,6 +41,7 @@ import org.apache.flink.streaming.api.operators.InternalTimerService;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.TimestampedCollector;
 import org.apache.flink.streaming.api.operators.Triggerable;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.util.RowDataUtil;
@@ -58,6 +61,7 @@ import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.commons.lang3.ArrayUtils;
 
 import java.util.Collection;
+import java.util.Iterator;
 
 import static java.util.Objects.requireNonNull;
 import static org.apache.flink.util.Preconditions.checkArgument;
@@ -152,6 +156,8 @@ public abstract class WindowOperator<K, W extends Window> extends AbstractStream
     private transient InternalValueState<K, W, RowData> windowState;
 
     protected transient InternalValueState<K, W, RowData> previousState;
+
+    private transient ListState<Long> windowWatermarkState;
 
     private transient TriggerContext triggerContext;
 
@@ -252,6 +258,17 @@ public abstract class WindowOperator<K, W extends Window> extends AbstractStream
             this.previousState =
                     (InternalValueState<K, W, RowData>)
                             getOrCreateKeyedState(windowSerializer, previousStateDescriptor);
+        }
+
+        ListStateDescriptor<Long> windowWatermarkStateDescriptor =
+                new ListStateDescriptor("window-agg-watermark-state", Long.class);
+        windowWatermarkState =
+                getOperatorStateBackend().getListState(windowWatermarkStateDescriptor);
+        Iterator<Long> watermarkIterator = windowWatermarkState.get().iterator();
+        if (watermarkIterator.hasNext() && getTimeServiceManager().isPresent()) {
+            long watermark = watermarkIterator.next();
+            LOG.warn("WindowOperator restores watermark: {} from state.", watermark);
+            getTimeServiceManager().get().advanceWatermark(new Watermark(watermark));
         }
 
         compileGeneratedCode();
@@ -450,6 +467,13 @@ public abstract class WindowOperator<K, W extends Window> extends AbstractStream
     @SuppressWarnings("unchecked")
     private K currentKey() {
         return (K) getCurrentKey();
+    }
+
+    @Override
+    public void processWatermark(Watermark mark) throws Exception {
+        windowWatermarkState.clear();
+        windowWatermarkState.add(mark.getTimestamp());
+        super.processWatermark(mark);
     }
 
     // ------------------------------------------------------------------------------

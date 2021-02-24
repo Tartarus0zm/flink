@@ -347,6 +347,68 @@ class WindowAggregateITCase(mode: StateBackendMode)
     assertEquals(expected.sorted, sink.getAppendResults.sorted)
   }
 
+  @Test
+  def testEventTimeTumblingWindow(): Unit = {
+    val data = List(
+      (1L, 1, "Hi"),
+      (2L, 2, "Hello"),
+      (4L, 2, "Hello"),
+      (8L, 3, "Hello world"),
+      (4L, 3, "Hello"),         // too late, drop
+      (16L, 3, "Hello world"),
+      (9L, 4, "Hello world"),   // too late, drop
+      (3L, 1, "Hi"))           // too late, drop
+
+    val stream = failingDataSource(data)
+      .assignTimestampsAndWatermarks(new TimestampAndWatermarkWithOffset[(Long, Int, String)](0L))
+    val table = stream.toTable(tEnv, 'long, 'int, 'string, 'rowtime.rowtime)
+    tEnv.registerTable("T1", table)
+    tEnv.createTemporarySystemFunction("weightAvgFun", classOf[WeightedAvg])
+
+    val sql =
+      """
+        |SELECT
+        |  `string`,
+        |  TUMBLE_START(rowtime, INTERVAL '0.005' SECOND) as w_start,
+        |  TUMBLE_END(rowtime, INTERVAL '0.005' SECOND),
+        |  COUNT(DISTINCT `long`),
+        |  COUNT(`int`),
+        |  CAST(AVG(`int`) AS INT),
+        |  weightAvgFun(`long`, `int`),
+        |  MIN(`int`),
+        |  MAX(`int`),
+        |  SUM(`int`)
+        |FROM T1
+        |GROUP BY `string`, TUMBLE(rowtime, INTERVAL '0.005' SECOND)
+      """.stripMargin
+
+    val result = tEnv.sqlQuery(sql)
+
+    val fieldTypes: Array[TypeInformation[_]] = Array(
+      Types.STRING,
+      Types.LOCAL_DATE_TIME,
+      Types.LOCAL_DATE_TIME,
+      Types.LONG,
+      Types.LONG,
+      Types.INT,
+      Types.LONG,
+      Types.INT,
+      Types.INT,
+      Types.INT)
+    val fieldNames = fieldTypes.indices.map("f" + _).toArray
+
+    val sink = new TestingUpsertTableSink(Array(0, 1)).configure(fieldNames, fieldTypes)
+    tEnv.asInstanceOf[TableEnvironmentInternal].registerTableSinkInternal("MySink", sink)
+    result.executeInsert("MySink").await()
+
+    val expected = Seq(
+      "Hi,1970-01-01T00:00,1970-01-01T00:00:00.005,1,1,1,1,1,1,1",
+      "Hello,1970-01-01T00:00,1970-01-01T00:00:00.005,2,2,2,3,2,2,4",
+      "Hello world,1970-01-01T00:00:00.005,1970-01-01T00:00:00.010,1,1,3,8,3,3,3",
+      "Hello world,1970-01-01T00:00:00.015,1970-01-01T00:00:00.020,1,1,3,16,3,3,3")
+    assertEquals(expected.sorted.mkString("\n"), sink.getUpsertResults.sorted.mkString("\n"))
+  }
+
   private def withLateFireDelay(tableConfig: TableConfig, interval: Time): Unit = {
     val intervalInMillis = interval.toMilliseconds
     val lateFireDelay: Duration = tableConfig.getConfiguration
