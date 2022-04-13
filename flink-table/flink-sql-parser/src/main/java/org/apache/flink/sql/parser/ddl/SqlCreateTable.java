@@ -73,6 +73,8 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 
     private final SqlTableLike tableLike;
 
+    private final SqlNode query;
+
     private final boolean isTemporary;
 
     public SqlCreateTable(
@@ -85,6 +87,7 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
             @Nullable SqlWatermark watermark,
             @Nullable SqlCharStringLiteral comment,
             @Nullable SqlTableLike tableLike,
+            @Nullable SqlNode query,
             boolean isTemporary,
             boolean ifNotExists) {
         super(OPERATOR, pos, false, ifNotExists);
@@ -98,6 +101,7 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
         this.watermark = watermark;
         this.comment = comment;
         this.tableLike = tableLike;
+        this.query = query;
         this.isTemporary = isTemporary;
     }
 
@@ -116,7 +120,8 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
                 partitionKeyList,
                 watermark,
                 comment,
-                tableLike);
+                tableLike,
+                query);
     }
 
     public SqlIdentifier getTableName() {
@@ -159,6 +164,10 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
         return isTemporary;
     }
 
+    public Optional<SqlNode> getQuery() {
+        return Optional.ofNullable(query);
+    }
+
     @Override
     public void validate() throws SqlValidateException {
 
@@ -187,6 +196,19 @@ public class SqlCreateTable extends SqlCreate implements ExtendedSqlNode {
 
         if (tableLike != null) {
             tableLike.validate();
+            if (query != null) {
+                throw new SqlValidateException(
+                        tableLike.getParserPosition(),
+                        "Create table like and create table as select cannot exist at the same time.");
+            }
+        }
+
+        if (query != null) {
+            if (columnList.size() > 0) {
+                throw new SqlValidateException(
+                        columnList.getParserPosition(),
+                        "Create table as select and columnList cannot exist at the same time.");
+            }
         }
     }
 

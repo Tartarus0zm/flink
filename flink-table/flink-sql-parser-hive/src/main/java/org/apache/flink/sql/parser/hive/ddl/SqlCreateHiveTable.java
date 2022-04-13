@@ -86,6 +86,7 @@ public class SqlCreateHiveTable extends SqlCreateTable {
                 null,
                 HiveDDLUtils.unescapeStringLiteral(comment),
                 null,
+                null,
                 isTemporary,
                 ifNotExists);
 

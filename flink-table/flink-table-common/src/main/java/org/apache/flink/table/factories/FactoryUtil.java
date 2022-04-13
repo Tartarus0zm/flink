@@ -226,6 +226,24 @@ public final class FactoryUtil {
                 isTemporary);
     }
 
+    public static DynamicTableSink createDynamicTableSink(
+            @Nullable DynamicTableSinkFactory preferredFactory,
+            ObjectIdentifier objectIdentifier,
+            ResolvedCatalogTable catalogTable,
+            Map<String, String> enrichmentOptions,
+            ReadableConfig configuration,
+            ClassLoader classLoader,
+            boolean isTemporary) {
+        return createDynamicTableSink(
+                preferredFactory,
+                objectIdentifier,
+                catalogTable,
+                enrichmentOptions,
+                configuration,
+                classLoader,
+                isTemporary);
+    }
+
     /**
      * Creates a {@link DynamicTableSink} from a {@link CatalogTable}.
      *
@@ -240,7 +258,8 @@ public final class FactoryUtil {
             Map<String, String> enrichmentOptions,
             ReadableConfig configuration,
             ClassLoader classLoader,
-            boolean isTemporary) {
+            boolean isTemporary,
+            boolean isCTAS) {
         final DefaultDynamicTableContext context =
                 new DefaultDynamicTableContext(
                         objectIdentifier,
@@ -248,7 +267,8 @@ public final class FactoryUtil {
                         enrichmentOptions,
                         configuration,
                         classLoader,
-                        isTemporary);
+                        isTemporary,
+                        isCTAS);
 
         try {
             final DynamicTableSinkFactory factory =
@@ -1205,6 +1225,7 @@ public final class FactoryUtil {
         private final ReadableConfig configuration;
         private final ClassLoader classLoader;
         private final boolean isTemporary;
+        private final boolean isCTAS;
 
         public DefaultDynamicTableContext(
                 ObjectIdentifier objectIdentifier,
@@ -1213,12 +1234,31 @@ public final class FactoryUtil {
                 ReadableConfig configuration,
                 ClassLoader classLoader,
                 boolean isTemporary) {
+            this(
+                    objectIdentifier,
+                    catalogTable,
+                    enrichmentOptions,
+                    configuration,
+                    classLoader,
+                    isTemporary,
+                    false);
+        }
+
+        public DefaultDynamicTableContext(
+                ObjectIdentifier objectIdentifier,
+                ResolvedCatalogTable catalogTable,
+                Map<String, String> enrichmentOptions,
+                ReadableConfig configuration,
+                ClassLoader classLoader,
+                boolean isTemporary,
+                boolean isCTAS) {
             this.objectIdentifier = objectIdentifier;
             this.catalogTable = catalogTable;
             this.enrichmentOptions = enrichmentOptions;
             this.configuration = configuration;
             this.classLoader = classLoader;
             this.isTemporary = isTemporary;
+            this.isCTAS = isCTAS;
         }
 
         @Override
@@ -1249,6 +1289,11 @@ public final class FactoryUtil {
         @Override
         public boolean isTemporary() {
             return isTemporary;
+        }
+
+        @Override
+        public boolean isCTAS() {
+            return isCTAS;
         }
     }
 

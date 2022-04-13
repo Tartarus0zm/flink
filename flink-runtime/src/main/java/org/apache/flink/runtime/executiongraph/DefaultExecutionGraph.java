@@ -1030,6 +1030,10 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
 
     @Override
     public void failGlobal(Throwable t) {
+        // do something to clear
+        for (ExecutionJobVertex ejv : verticesInCreationOrder) {
+            ejv.getJobVertex().failedOnMaster(getUserClassLoader());
+        }
         checkState(internalTaskFailuresListener != null);
         internalTaskFailuresListener.notifyGlobalFailure(t);
     }

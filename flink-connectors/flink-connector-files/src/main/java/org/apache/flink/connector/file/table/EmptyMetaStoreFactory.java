@@ -20,6 +20,7 @@ package org.apache.flink.connector.file.table;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.table.catalog.ObjectIdentifier;
 
 import java.util.LinkedHashMap;
 import java.util.Optional;
@@ -51,6 +52,9 @@ public class EmptyMetaStoreFactory implements TableMetaStoreFactory {
             @Override
             public void createOrAlterPartition(
                     LinkedHashMap<String, String> partitionSpec, Path partitionPath) {}
+
+            @Override
+            public void dropTable(ObjectIdentifier identifier) throws Exception {}
 
             @Override
             public void close() {}

@@ -37,6 +37,7 @@ import org.apache.flink.util.Preconditions;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.mapred.JobConf;
 
+import java.util.Collections;
 import java.util.Set;
 
 import static org.apache.flink.connectors.hive.HiveOptions.STREAMING_SOURCE_ENABLE;
@@ -77,9 +78,11 @@ public class HiveDynamicTableFactory implements DynamicTableSourceFactory, Dynam
                             null,
                             context.getObjectIdentifier(),
                             context.getCatalogTable(),
+                            Collections.emptyMap(),
                             context.getConfiguration(),
                             context.getClassLoader(),
-                            context.isTemporary());
+                            context.isTemporary(),
+                            context.isCTAS());
             if (sink instanceof RequireCatalogLock) {
                 ((RequireCatalogLock) sink).setLockFactory(HiveCatalogLock.createFactory(hiveConf));
             }
@@ -91,11 +94,12 @@ public class HiveDynamicTableFactory implements DynamicTableSourceFactory, Dynam
                         .get(FileSystemConnectorOptions.SINK_PARALLELISM);
         final JobConf jobConf = JobConfUtils.createJobConfWithCredentials(hiveConf);
         return new HiveTableSink(
-                context.getConfiguration(),
-                jobConf,
-                context.getObjectIdentifier(),
-                context.getCatalogTable(),
-                configuredParallelism);
+                        context.getConfiguration(),
+                        jobConf,
+                        context.getObjectIdentifier(),
+                        context.getCatalogTable(),
+                        configuredParallelism)
+                .withCTAS(context.isCTAS());
     }
 
     @Override

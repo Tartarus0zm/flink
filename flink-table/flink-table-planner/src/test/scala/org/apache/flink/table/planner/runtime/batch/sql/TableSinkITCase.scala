@@ -97,4 +97,38 @@ class TableSinkITCase extends BatchTestBase {
     tEnv.getConfig.set(CollectSinkOperatorFactory.MAX_BATCH_SIZE, MemorySize.parse("1kb"))
     checkResult("SELECT 1", Seq(row(1)))
   }
+
+  @Test
+  def testCreateTableAsSelect(): Unit = {
+    val dataId = TestValuesTableFactory.registerData(smallData3)
+    tEnv.executeSql(
+      s"""
+         |CREATE TABLE MyTable (
+         |  `a` INT,
+         |  `b` BIGINT,
+         |  `c` STRING
+         |) WITH (
+         |  'connector' = 'values',
+         |  'bounded' = 'true',
+         |  'data-id' = '$dataId'
+         |)
+       """.stripMargin)
+
+    tEnv.getConfig.getConfiguration.setBoolean(
+      TableConfigOptions.TABLE_DYNAMIC_TABLE_OPTIONS_ENABLED, true)
+    val resultPath = BatchAbstractTestBase.TEMPORARY_FOLDER.newFolder().getAbsolutePath
+    tEnv.executeSql(
+      s"""
+         |CREATE TABLE MySink
+         | WITH (
+         |  'connector' = 'filesystem',
+         |  'format' = 'testcsv',
+         |  'path' = '$resultPath'
+         |) AS
+         | select * from MyTable
+       """.stripMargin).await()
+    val expected = Seq("1,1,Hi", "2,2,Hello", "3,2,Hello world")
+    val result = TableTestUtil.readFromFile(resultPath)
+    Assert.assertEquals(expected.sorted, result.sorted)
+  }
 }

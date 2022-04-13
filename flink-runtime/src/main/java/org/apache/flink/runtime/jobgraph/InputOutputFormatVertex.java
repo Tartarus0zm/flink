@@ -154,6 +154,33 @@ public class InputOutputFormatVertex extends JobVertex {
         }
     }
 
+    @Override
+    public void failedOnMaster(ClassLoader loader) {
+        final ClassLoader original = Thread.currentThread().getContextClassLoader();
+        try {
+            final InputOutputFormatContainer formatContainer =
+                    initInputOutputformatContainer(loader);
+            // set user classloader before calling user code
+            Thread.currentThread().setContextClassLoader(loader);
+
+            // configure output formats and invoke finalizeGlobal()
+            Map<OperatorID, UserCodeWrapper<? extends OutputFormat<?>>> outputFormats =
+                    formatContainer.getOutputFormats();
+            for (Map.Entry<OperatorID, UserCodeWrapper<? extends OutputFormat<?>>> entry :
+                    outputFormats.entrySet()) {
+                final OutputFormat<?> outputFormat = entry.getValue().getUserCodeObject();
+                outputFormat.configure(formatContainer.getParameters(entry.getKey()));
+                if (outputFormat instanceof FinalizeOnMaster) {
+                    ((FinalizeOnMaster) outputFormat).failedGlobal();
+                }
+            }
+        } catch (Throwable t) {
+        } finally {
+            // restore original classloader
+            Thread.currentThread().setContextClassLoader(original);
+        }
+    }
+
     public String getFormatDescription(OperatorID operatorID) {
         return formatDescriptions.get(operatorID);
     }

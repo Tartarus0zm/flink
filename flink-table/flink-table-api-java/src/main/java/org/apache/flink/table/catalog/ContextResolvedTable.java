@@ -60,6 +60,7 @@ public final class ContextResolvedTable {
     private final @Nullable Catalog catalog;
     private final ResolvedCatalogBaseTable<?> resolvedTable;
     private final boolean anonymous;
+    private boolean isCTAS = false;
 
     public static ContextResolvedTable permanent(
             ObjectIdentifier identifier,
@@ -98,10 +99,20 @@ public final class ContextResolvedTable {
             @Nullable Catalog catalog,
             ResolvedCatalogBaseTable<?> resolvedTable,
             boolean anonymous) {
+        this(objectIdentifier, catalog, resolvedTable, anonymous, false);
+    }
+
+    private ContextResolvedTable(
+            ObjectIdentifier objectIdentifier,
+            @Nullable Catalog catalog,
+            ResolvedCatalogBaseTable<?> resolvedTable,
+            boolean anonymous,
+            boolean isCTAS) {
         this.objectIdentifier = Preconditions.checkNotNull(objectIdentifier);
         this.catalog = catalog;
         this.resolvedTable = Preconditions.checkNotNull(resolvedTable);
         this.anonymous = anonymous;
+        this.isCTAS = isCTAS;
     }
 
     public boolean isAnonymous() {
@@ -142,6 +153,15 @@ public final class ContextResolvedTable {
         return (T) resolvedTable.getOrigin();
     }
 
+    public ContextResolvedTable withCTAS() {
+        this.isCTAS = true;
+        return this;
+    }
+
+    public boolean isCTAS() {
+        return isCTAS;
+    }
+
     /**
      * Copy the {@link ContextResolvedTable}, replacing the underlying {@link CatalogTable} options.
      */
@@ -154,7 +174,8 @@ public final class ContextResolvedTable {
                 objectIdentifier,
                 catalog,
                 ((ResolvedCatalogTable) resolvedTable).copy(newOptions),
-                false);
+                false,
+                isCTAS);
     }
 
     /**

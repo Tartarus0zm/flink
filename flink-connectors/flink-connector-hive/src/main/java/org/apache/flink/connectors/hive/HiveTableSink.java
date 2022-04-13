@@ -120,6 +120,7 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
     private LinkedHashMap<String, String> staticPartitionSpec = new LinkedHashMap<>();
     private boolean overwrite = false;
     private boolean dynamicGrouping = false;
+    private boolean isCTAS = false;
 
     @Nullable private final Integer configuredParallelism;
 
@@ -157,6 +158,11 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
         hiveShim = HiveShimLoader.loadHiveShim(hiveVersion);
         tableSchema = TableSchemaUtils.getPhysicalSchema(table.getSchema());
         this.configuredParallelism = configuredParallelism;
+    }
+
+    public HiveTableSink withCTAS(boolean isCTAS) {
+        this.isCTAS = isCTAS;
+        return this;
     }
 
     @Override
@@ -263,6 +269,8 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
         builder.setTempPath(
                 new org.apache.flink.core.fs.Path(toStagingDir(sd.getLocation(), jobConf)));
         builder.setOutputFileConfig(fileNaming);
+        builder.setObjectIdentifier(identifier);
+        builder.setCTAS(isCTAS);
         return dataStream
                 .map((MapFunction<RowData, Row>) value -> (Row) converter.toExternal(value))
                 .writeUsingOutputFormat(builder.build())

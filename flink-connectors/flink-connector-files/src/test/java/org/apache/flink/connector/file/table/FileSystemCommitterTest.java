@@ -20,6 +20,7 @@ package org.apache.flink.connector.file.table;
 
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.table.catalog.ObjectIdentifier;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -142,6 +143,9 @@ public class FileSystemCommitterTest {
                 public void createOrAlterPartition(
                         LinkedHashMap<String, String> partitionSpec, Path partitionPath)
                         throws Exception {}
+
+                @Override
+                public void dropTable(ObjectIdentifier identifier) throws Exception {}
 
                 @Override
                 public void close() {}

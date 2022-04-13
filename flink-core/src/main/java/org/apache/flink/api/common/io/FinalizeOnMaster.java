@@ -37,4 +37,6 @@ public interface FinalizeOnMaster {
      * @throws IOException The finalization may throw exceptions, which may cause the job to abort.
      */
     void finalizeGlobal(int parallelism) throws IOException;
+
+    default void failedGlobal() {};
 }

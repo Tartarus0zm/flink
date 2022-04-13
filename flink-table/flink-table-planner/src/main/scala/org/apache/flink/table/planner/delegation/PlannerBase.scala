@@ -418,7 +418,8 @@ abstract class PlannerBase(
             Collections.emptyMap(),
             getTableConfig,
             getFlinkContext.getClassLoader,
-            isTemporary)
+            isTemporary,
+            contextResolvedTable.isCTAS)
           Option(resolvedTable, tableSink)
         }
 

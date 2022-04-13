@@ -21,6 +21,7 @@ package org.apache.flink.connectors.hive;
 import org.apache.flink.connector.file.table.TableMetaStoreFactory;
 import org.apache.flink.connectors.hive.util.HiveConfUtils;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.table.catalog.ObjectIdentifier;
 import org.apache.flink.table.catalog.hive.client.HiveMetastoreClientFactory;
 import org.apache.flink.table.catalog.hive.client.HiveMetastoreClientWrapper;
 import org.apache.flink.table.catalog.hive.util.HiveTableUtil;
@@ -108,6 +109,11 @@ public class HiveTableMetaStoreFactory implements TableMetaStoreFactory {
                 return;
             }
             alterPartition(partitionSpec, partitionPath, partition);
+        }
+
+        @Override
+        public void dropTable(ObjectIdentifier identifier) throws Exception {
+            client.dropTable(identifier.getDatabaseName(), identifier.getObjectName());
         }
 
         private void createPartition(LinkedHashMap<String, String> partSpec, Path path)

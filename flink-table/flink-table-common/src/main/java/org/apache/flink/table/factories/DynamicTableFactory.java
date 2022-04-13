@@ -214,5 +214,9 @@ public interface DynamicTableFactory extends Factory {
         default int[] getPrimaryKeyIndexes() {
             return getCatalogTable().getResolvedSchema().getPrimaryKeyIndexes();
         }
+
+        default boolean isCTAS() {
+            return false;
+        }
     }
 }

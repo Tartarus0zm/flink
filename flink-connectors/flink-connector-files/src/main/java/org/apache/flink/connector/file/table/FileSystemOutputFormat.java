@@ -26,6 +26,7 @@ import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.table.api.TableException;
+import org.apache.flink.table.catalog.ObjectIdentifier;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -53,6 +54,8 @@ public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMas
     private final PartitionComputer<T> computer;
     private final OutputFormatFactory<T> formatFactory;
     private final OutputFileConfig outputFileConfig;
+    private final ObjectIdentifier identifier;
+    private final boolean isCTAS;
 
     private transient PartitionWriter<T> writer;
     private transient Configuration parameters;
@@ -67,7 +70,9 @@ public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMas
             LinkedHashMap<String, String> staticPartitions,
             OutputFormatFactory<T> formatFactory,
             PartitionComputer<T> computer,
-            OutputFileConfig outputFileConfig) {
+            OutputFileConfig outputFileConfig,
+            ObjectIdentifier identifier,
+            boolean isCTAS) {
         this.fsFactory = fsFactory;
         this.msFactory = msFactory;
         this.overwrite = overwrite;
@@ -78,6 +83,8 @@ public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMas
         this.formatFactory = formatFactory;
         this.computer = computer;
         this.outputFileConfig = outputFileConfig;
+        this.identifier = identifier;
+        this.isCTAS = isCTAS;
     }
 
     @Override
@@ -94,6 +101,17 @@ public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMas
                 fsFactory.create(tmpPath.toUri()).delete(tmpPath, true);
             } catch (IOException ignore) {
             }
+        }
+    }
+
+    @Override
+    public void failedGlobal() {
+        try {
+            if (isCTAS) {
+                fsFactory.create(tmpPath.toUri()).delete(tmpPath, true);
+                msFactory.createTableMetaStore().dropTable(identifier);
+            }
+        } catch (Exception e) {
         }
     }
 
@@ -155,6 +173,9 @@ public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMas
 
         private OutputFileConfig outputFileConfig = new OutputFileConfig("", "");
 
+        private ObjectIdentifier identifier;
+        private boolean isCTAS = false;
+
         public Builder<T> setPartitionColumns(String[] partitionColumns) {
             this.partitionColumns = partitionColumns;
             return this;
@@ -205,6 +226,16 @@ public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMas
             return this;
         }
 
+        public Builder<T> setObjectIdentifier(ObjectIdentifier identifier) {
+            this.identifier = identifier;
+            return this;
+        }
+
+        public Builder<T> setCTAS(boolean isCTAS) {
+            this.isCTAS = isCTAS;
+            return this;
+        }
+
         public FileSystemOutputFormat<T> build() {
             checkNotNull(partitionColumns, "partitionColumns should not be null");
             checkNotNull(formatFactory, "formatFactory should not be null");
@@ -222,7 +253,9 @@ public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMas
                     staticPartitions,
                     formatFactory,
                     computer,
-                    outputFileConfig);
+                    outputFileConfig,
+                    identifier,
+                    isCTAS);
         }
     }
 }

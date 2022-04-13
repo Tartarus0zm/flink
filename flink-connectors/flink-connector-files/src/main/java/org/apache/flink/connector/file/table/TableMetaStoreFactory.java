@@ -21,6 +21,7 @@ package org.apache.flink.connector.file.table;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.catalog.Catalog;
+import org.apache.flink.table.catalog.ObjectIdentifier;
 
 import java.io.Closeable;
 import java.io.Serializable;
@@ -62,5 +63,7 @@ public interface TableMetaStoreFactory extends Serializable {
          */
         void createOrAlterPartition(LinkedHashMap<String, String> partitionSpec, Path partitionPath)
                 throws Exception;
+
+        void dropTable(ObjectIdentifier identifier) throws Exception;
     }
 }

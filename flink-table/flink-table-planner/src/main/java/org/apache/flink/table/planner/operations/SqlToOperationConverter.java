@@ -276,8 +276,15 @@ public class SqlToOperationConverter {
         } else if (validated instanceof SqlUseDatabase) {
             return Optional.of(converter.convertUseDatabase((SqlUseDatabase) validated));
         } else if (validated instanceof SqlCreateTable) {
-            return Optional.of(
-                    converter.createTableConverter.convertCreateTable((SqlCreateTable) validated));
+            SqlCreateTable sqlCreateTable = (SqlCreateTable) validated;
+            if (sqlCreateTable.getQuery().isPresent()) {
+                return Optional.of(
+                        converter.createTableConverter.convertCreateTableAS(
+                                flinkPlanner, sqlCreateTable));
+            } else {
+                return Optional.of(
+                        converter.createTableConverter.convertCreateTable(sqlCreateTable));
+            }
         } else if (validated instanceof SqlDropTable) {
             return Optional.of(converter.convertDropTable((SqlDropTable) validated));
         } else if (validated instanceof SqlAlterTable) {

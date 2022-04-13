@@ -56,7 +56,9 @@ public class CreateTableASOperation implements CreateOperation {
 
     public SinkModifyOperation toSinkModifyOperation(CatalogManager catalogManager) {
         return new SinkModifyOperation(
-                catalogManager.getTableOrError(createTableOperation.getTableIdentifier()),
+                catalogManager
+                        .getTableOrError(createTableOperation.getTableIdentifier())
+                        .withCTAS(),
                 sinkModifyQuery,
                 sinkModifyStaticPartitions,
                 sinkModifyOverwrite,

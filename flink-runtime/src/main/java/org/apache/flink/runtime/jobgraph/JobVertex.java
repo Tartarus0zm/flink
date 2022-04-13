@@ -534,6 +534,8 @@ public class JobVertex implements java.io.Serializable {
      */
     public void finalizeOnMaster(ClassLoader loader) throws Exception {}
 
+    public void failedOnMaster(ClassLoader loader) {}
+
     // --------------------------------------------------------------------------------------------
 
     public String getOperatorName() {
