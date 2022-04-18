@@ -28,6 +28,9 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig
 import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.catalog.ObjectIdentifier;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.LinkedHashMap;
@@ -43,6 +46,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMaster, Serializable {
 
     private static final long serialVersionUID = 1L;
+    private static final Logger LOG = LoggerFactory.getLogger(FileSystemOutputFormat.class);
 
     private final FileSystemFactory fsFactory;
     private final TableMetaStoreFactory msFactory;
@@ -107,11 +111,14 @@ public class FileSystemOutputFormat<T> implements OutputFormat<T>, FinalizeOnMas
     @Override
     public void failedGlobal() {
         try {
+            LOG.warn("##### file output failedGlobal start ...");
             if (isCTAS) {
+                LOG.warn("##### CTAS drop table ...");
                 fsFactory.create(tmpPath.toUri()).delete(tmpPath, true);
                 msFactory.createTableMetaStore().dropTable(identifier);
             }
         } catch (Exception e) {
+            LOG.error("failedGlobal exception", e);
         }
     }
 

@@ -26,6 +26,9 @@ import org.apache.flink.api.common.operators.util.UserCodeWrapper;
 import org.apache.flink.runtime.OperatorIDPair;
 import org.apache.flink.runtime.operators.util.TaskConfig;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +42,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 public class InputOutputFormatVertex extends JobVertex {
 
     private static final long serialVersionUID = 1L;
+
+    private static final Logger LOG = LoggerFactory.getLogger(InputOutputFormatVertex.class);
 
     private final Map<OperatorID, String> formatDescriptions = new HashMap<>();
 
@@ -175,6 +180,7 @@ public class InputOutputFormatVertex extends JobVertex {
                 }
             }
         } catch (Throwable t) {
+            LOG.error("failedOnMaster", t);
         } finally {
             // restore original classloader
             Thread.currentThread().setContextClassLoader(original);
