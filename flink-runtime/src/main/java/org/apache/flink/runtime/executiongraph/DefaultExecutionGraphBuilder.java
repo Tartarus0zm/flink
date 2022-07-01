@@ -136,7 +136,8 @@ public class DefaultExecutionGraphBuilder {
                             initializationTimestamp,
                             vertexAttemptNumberStore,
                             vertexParallelismStore,
-                            isDynamicGraph);
+                            isDynamicGraph,
+                            jobGraph.getJobStatusHooks());
         } catch (IOException e) {
             throw new JobException("Could not create the ExecutionGraph.", e);
         }

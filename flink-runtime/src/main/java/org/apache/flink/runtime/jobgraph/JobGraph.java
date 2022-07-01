@@ -25,6 +25,7 @@ import org.apache.flink.api.common.cache.DistributedCache;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.runtime.blob.PermanentBlobKey;
+import org.apache.flink.runtime.executiongraph.JobStatusHook;
 import org.apache.flink.runtime.jobgraph.tasks.JobCheckpointingSettings;
 import org.apache.flink.runtime.jobmanager.scheduler.CoLocationGroup;
 import org.apache.flink.runtime.jobmanager.scheduler.SlotSharingGroup;
@@ -117,6 +118,8 @@ public class JobGraph implements Serializable {
     private List<URL> classpaths = Collections.emptyList();
 
     // --------------------------------------------------------------------------------------------
+    /** List of user-defined job status change hooks. */
+    private final List<JobStatusHook> jobStatusHooks = new ArrayList<>();
 
     /**
      * Constructs a new job graph with the given name, the given {@link ExecutionConfig}, and a
@@ -627,5 +630,13 @@ public class JobGraph implements Serializable {
             DistributedCache.writeFileInfoToConfig(
                     userArtifact.getKey(), userArtifact.getValue(), jobConfiguration);
         }
+    }
+
+    public void setJobStatusHooks(List<JobStatusHook> hooks) {
+        this.jobStatusHooks.addAll(hooks);
+    }
+
+    public List<JobStatusHook> getJobStatusHooks() {
+        return this.jobStatusHooks;
     }
 }

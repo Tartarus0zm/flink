@@ -225,6 +225,8 @@ public class StreamingJobGraphGenerator {
 
         setVertexDescription();
 
+        jobGraph.setJobStatusHooks(streamGraph.getJobStatusHooks());
+
         return jobGraph;
     }
 
