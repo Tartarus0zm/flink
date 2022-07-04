@@ -633,6 +633,7 @@ public class JobGraph implements Serializable {
     }
 
     public void setJobStatusHooks(List<JobStatusHook> hooks) {
+        this.jobStatusHooks.clear();
         this.jobStatusHooks.addAll(hooks);
     }
 
