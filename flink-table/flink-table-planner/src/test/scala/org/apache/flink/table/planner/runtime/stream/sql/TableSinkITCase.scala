@@ -17,11 +17,13 @@
  */
 package org.apache.flink.table.planner.runtime.stream.sql
 
+import org.apache.flink.table.api.config.TableConfigOptions
 import org.apache.flink.table.planner.expressions.utils.TestNonDeterministicUdf
 import org.apache.flink.table.planner.factories.TestValuesTableFactory
 import org.apache.flink.table.planner.runtime.utils._
 import org.apache.flink.table.planner.runtime.utils.BatchTestBase.row
 import org.apache.flink.table.planner.runtime.utils.StreamingWithStateTestBase.StateBackendMode
+import org.apache.flink.util.InstantiationUtil
 
 import org.assertj.core.api.Assertions
 import org.junit.Assert.assertEquals
@@ -258,6 +260,52 @@ class TableSinkITCase(mode: StateBackendMode) extends StreamingWithStateTestBase
 
   @Test
   def testCreateTableAsSelect(): Unit = {
+    tEnv
+      .executeSql("""
+                    |CREATE TABLE MyCtasTable
+                    | WITH (
+                    |   'connector' = 'values',
+                    |   'sink-insert-only' = 'true'
+                    |) AS
+                    |  SELECT
+                    |    `person`,
+                    |    `votes`
+                    |  FROM
+                    |    src
+                    |""".stripMargin)
+      .await()
+    val actual = TestValuesTableFactory.getResults("MyCtasTable")
+    val expected = List(
+      "+I[jason, 1]",
+      "+I[jason, 1]",
+      "+I[jason, 1]",
+      "+I[jason, 1]"
+    )
+    Assertions.assertThat(actual.sorted).isEqualTo(expected.sorted)
+    // test statement set
+    val statementSet = tEnv.createStatementSet()
+    statementSet.addInsertSql("""
+                                |CREATE TABLE MyCtasTableUseStatement
+                                | WITH (
+                                |   'connector' = 'values',
+                                |   'sink-insert-only' = 'true'
+                                |) AS
+                                |  SELECT
+                                |    `person`,
+                                |    `votes`
+                                |  FROM
+                                |    src
+                                |""".stripMargin)
+    statementSet.execute().await()
+    val actualUseStatement = TestValuesTableFactory.getResults("MyCtasTableUseStatement")
+    Assertions.assertThat(actualUseStatement.sorted).isEqualTo(expected.sorted)
+  }
+
+  @Test
+  def testCreateTableAsSelectWithAtomic(): Unit = {
+
+//    InstantiationUtil.deserializeObject(InstantiationUtil.serializeObject(currentCatalog), getClass.getClassLoader)
+    tEnv.getConfig.set("table.ctas.atomicity-enabled", "true")
     tEnv
       .executeSql("""
                     |CREATE TABLE MyCtasTable

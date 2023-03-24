@@ -53,6 +53,7 @@ import org.apache.flink.table.utils.CatalogManagerMocks;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.CollectionUtil;
 import org.apache.flink.util.FileUtils;
+import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.UserClassLoaderJarTestUtils;
 
 import org.apache.hadoop.hive.conf.HiveConf;
@@ -124,6 +125,35 @@ public class HiveDialectITCase {
         if (warehouse != null) {
             FileUtils.deleteDirectoryQuietly(new File(warehouse));
         }
+    }
+
+    @Test
+    public void testCatalogSerialize() throws Exception {
+        System.out.println("before serialize name: " + hiveCatalog.getName());
+        System.out.println("before serialize db: " + hiveCatalog.getDefaultDatabase());
+        System.out.println("before serialize HiveVersion: " + hiveCatalog.getHiveVersion());
+        System.out.println(
+                "before serialize hiveconf : "
+                        + hiveCatalog
+                                .getHiveConf()
+                                .getBoolVar(
+                                        HiveConf.ConfVars
+                                                .METASTORE_DISALLOW_INCOMPATIBLE_COL_TYPE_CHANGES));
+        HiveCatalog deserializeObject =
+                InstantiationUtil.deserializeObject(
+                        InstantiationUtil.serializeObject(hiveCatalog),
+                        Thread.currentThread().getContextClassLoader());
+        System.out.println("after serialize name: " + deserializeObject.getName());
+        System.out.println("after serialize db: " + deserializeObject.getDefaultDatabase());
+        System.out.println("after serialize HiveVersion: " + deserializeObject.getHiveVersion());
+        System.out.println("after serialize hiveconf: " + deserializeObject.getHiveConf());
+        System.out.println(
+                "after serialize hiveconf : "
+                        + deserializeObject
+                                .getHiveConf()
+                                .getBoolVar(
+                                        HiveConf.ConfVars
+                                                .METASTORE_DISALLOW_INCOMPATIBLE_COL_TYPE_CHANGES));
     }
 
     @Test

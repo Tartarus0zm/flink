@@ -724,6 +724,24 @@ public class HiveTableSinkITCase {
         }
     }
 
+    @Test
+    public void testAtomicCtasWith() throws Exception {
+        //        TableEnvironment tEnv = HiveTestUtils.createTableEnvInBatchMode();
+        TableEnvironment tEnv = HiveTestUtils.createTableEnvInBatchMode(SqlDialect.HIVE);
+        tEnv.getConfig().set("table.ctas.atomicity-enabled", "true");
+        tEnv.registerCatalog(hiveCatalog.getName(), hiveCatalog);
+        tEnv.useCatalog(hiveCatalog.getName());
+        tEnv.executeSql(
+                "create table test_source_table ("
+                        + "name string, "
+                        + "age int, "
+                        + "address string)");
+
+        tEnv.executeSql(
+                        "create table test_atomic_ctas_table as select name, age from test_source_table")
+                .await();
+    }
+
     private long getPathSize(java.nio.file.Path path) throws IOException {
         String defaultSuccessFileName =
                 HiveOptions.SINK_PARTITION_COMMIT_SUCCESS_FILE_NAME.defaultValue();

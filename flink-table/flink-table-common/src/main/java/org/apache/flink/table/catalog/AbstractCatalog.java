@@ -20,10 +20,12 @@ package org.apache.flink.table.catalog;
 
 import org.apache.flink.util.StringUtils;
 
+import java.io.Serializable;
+
 import static org.apache.flink.util.Preconditions.checkArgument;
 
 /** Abstract class for catalogs. */
-public abstract class AbstractCatalog implements Catalog {
+public abstract class AbstractCatalog implements Catalog, Serializable {
     private final String catalogName;
     private final String defaultDatabase;
 

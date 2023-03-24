@@ -35,6 +35,7 @@ import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.factories.ManagedTableFactory;
 import org.apache.flink.table.resource.ResourceType;
 import org.apache.flink.table.resource.ResourceUri;
+import org.apache.flink.util.InstantiationUtil;
 
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.api.Table;
@@ -305,6 +306,16 @@ public class HiveCatalogTest {
             checkCatalogFunction(catalogFunction, hiveCatalog.getFunction(functionPath));
             hiveCatalog.dropFunction(functionPath, false);
         }
+    }
+
+    @Test
+    public void testSerde() throws Exception {
+        HiveCatalog newCatalog =
+                InstantiationUtil.deserializeObject(
+                        InstantiationUtil.serializeObject(hiveCatalog),
+                        Thread.currentThread().getContextClassLoader());
+        System.out.println(newCatalog.getName());
+        System.out.println(newCatalog.getDefaultDatabase());
     }
 
     private static Map<String, String> getLegacyFileSystemConnectorOptions(String path) {

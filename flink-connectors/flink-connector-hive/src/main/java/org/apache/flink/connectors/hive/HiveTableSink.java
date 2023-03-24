@@ -82,6 +82,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.ql.exec.Utilities;
@@ -96,6 +97,7 @@ import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -237,7 +239,9 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
                                 CatalogPropertiesUtil.FLINK_PROPERTY_PREFIX + IS_INSERT_DIRECTORY,
                                 "false"));
         boolean isToLocal = false;
-        if (isInsertDirectory) {
+        boolean isAtomicCtasTable =
+                Boolean.parseBoolean(options.getOrDefault("flink.atomic-ctas-table", "false"));
+        if (isInsertDirectory || isAtomicCtasTable) {
             isToLocal =
                     Boolean.parseBoolean(
                             options.getOrDefault(
@@ -253,6 +257,19 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
             HiveTableUtil.extractRowFormat(sd, catalogTable.getOptions());
             HiveTableUtil.extractStoredAs(sd, catalogTable.getOptions(), hiveConf);
             HiveTableUtil.extractLocation(sd, catalogTable.getOptions());
+            if (isAtomicCtasTable) {
+                try (HiveMetastoreClientWrapper client =
+                        HiveMetastoreClientFactory.create(
+                                HiveConfUtils.create(jobConf), hiveVersion)) {
+                    Database database = client.getDatabase(identifier.getDatabaseName());
+                    sd.setLocation(
+                            new URI(database.getLocationUri()).getPath()
+                                    + "/"
+                                    + identifier.getObjectName());
+                } catch (Exception e) {
+                    throw new CatalogException("Failed to query database from Hive metaStore", e);
+                }
+            }
             tableProps.putAll(sd.getSerdeInfo().getParameters());
             tableProps.putAll(catalogTable.getOptions());
         } else {

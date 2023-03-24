@@ -574,6 +574,7 @@ public final class InstantiationUtil {
         try {
             serializeObject(o);
         } catch (IOException e) {
+            e.printStackTrace();
             return false;
         }
 

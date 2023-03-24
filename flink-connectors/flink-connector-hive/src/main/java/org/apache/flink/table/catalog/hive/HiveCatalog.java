@@ -22,6 +22,7 @@ import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.java.hadoop.mapred.utils.HadoopUtils;
 import org.apache.flink.connectors.hive.FlinkHiveException;
+import org.apache.flink.connectors.hive.HiveConfWrapper;
 import org.apache.flink.connectors.hive.HiveDynamicTableFactory;
 import org.apache.flink.connectors.hive.HiveTableFactory;
 import org.apache.flink.connectors.hive.util.HivePartitionUtils;
@@ -112,10 +113,15 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -159,11 +165,11 @@ public class HiveCatalog extends AbstractCatalog {
     private static final String FLINK_SCALA_FUNCTION_PREFIX = "flink:scala:";
     private static final String FLINK_PYTHON_FUNCTION_PREFIX = "flink:python:";
 
-    private final HiveConf hiveConf;
+    private final HiveConfWrapper hiveConfWrapper;
     private final String hiveVersion;
     private final HiveShim hiveShim;
 
-    @VisibleForTesting HiveMetastoreClientWrapper client;
+    @VisibleForTesting transient HiveMetastoreClientWrapper client;
 
     public HiveCatalog(
             String catalogName, @Nullable String defaultDatabase, @Nullable String hiveConfDir) {
@@ -208,10 +214,11 @@ public class HiveCatalog extends AbstractCatalog {
             boolean allowEmbedded) {
         super(catalogName, defaultDatabase == null ? DEFAULT_DB : defaultDatabase);
 
-        this.hiveConf = hiveConf == null ? createHiveConf(null, null) : hiveConf;
+        this.hiveConfWrapper =
+                new HiveConfWrapper(hiveConf == null ? createHiveConf(null, null) : hiveConf);
         if (!allowEmbedded) {
             checkArgument(
-                    !isEmbeddedMetastore(this.hiveConf),
+                    !isEmbeddedMetastore(this.hiveConfWrapper.conf()),
                     "Embedded metastore is not allowed. Make sure you have set a valid value for "
                             + HiveConf.ConfVars.METASTOREURIS.toString());
         }
@@ -220,7 +227,7 @@ public class HiveCatalog extends AbstractCatalog {
         hiveShim = HiveShimLoader.loadHiveShim(hiveVersion);
         // add this to hiveConf to make sure table factory and source/sink see the same Hive version
         // as HiveCatalog
-        this.hiveConf.set(HiveCatalogFactoryOptions.HIVE_VERSION.key(), hiveVersion);
+        this.hiveConfWrapper.conf().set(HiveCatalogFactoryOptions.HIVE_VERSION.key(), hiveVersion);
 
         LOG.info("Created HiveCatalog '{}'", catalogName);
     }
@@ -289,7 +296,7 @@ public class HiveCatalog extends AbstractCatalog {
     }
 
     public HiveConf getHiveConf() {
-        return hiveConf;
+        return hiveConfWrapper.conf();
     }
 
     @Internal
@@ -300,7 +307,7 @@ public class HiveCatalog extends AbstractCatalog {
     @Override
     public void open() throws CatalogException {
         if (client == null) {
-            client = HiveMetastoreClientFactory.create(hiveConf, hiveVersion);
+            client = HiveMetastoreClientFactory.create(hiveConfWrapper.conf(), hiveVersion);
             LOG.info("Connected to Hive metastore");
         }
 
@@ -323,7 +330,7 @@ public class HiveCatalog extends AbstractCatalog {
 
     @Override
     public Optional<Factory> getFactory() {
-        return Optional.of(new HiveDynamicTableFactory(hiveConf));
+        return Optional.of(new HiveDynamicTableFactory(hiveConfWrapper.conf()));
     }
 
     @Override
@@ -480,7 +487,8 @@ public class HiveCatalog extends AbstractCatalog {
 
         boolean managedTable = ManagedTableListener.isManagedTable(this, table);
         Table hiveTable =
-                HiveTableUtil.instantiateHiveTable(tablePath, table, hiveConf, managedTable);
+                HiveTableUtil.instantiateHiveTable(
+                        tablePath, table, hiveConfWrapper.conf(), managedTable);
 
         UniqueConstraint pkConstraint = null;
         List<String> notNullCols = new ArrayList<>();
@@ -527,7 +535,12 @@ public class HiveCatalog extends AbstractCatalog {
                 }
 
                 client.createTableWithConstraints(
-                        hiveTable, hiveConf, pkConstraint, pkTraits, notNullCols, nnTraits);
+                        hiveTable,
+                        hiveConfWrapper.conf(),
+                        pkConstraint,
+                        pkTraits,
+                        notNullCols,
+                        nnTraits);
             } else {
                 client.createTable(hiveTable);
             }
@@ -539,6 +552,45 @@ public class HiveCatalog extends AbstractCatalog {
             throw new CatalogException(
                     String.format("Failed to create table %s", tablePath.getFullName()), e);
         }
+    }
+
+    public byte[] ser(ObjectPath tablePath, CatalogBaseTable table) throws Exception {
+        checkNotNull(tablePath, "tablePath cannot be null");
+        checkNotNull(table, "table cannot be null");
+
+        if (!databaseExists(tablePath.getDatabaseName())) {
+            throw new DatabaseNotExistException(getName(), tablePath.getDatabaseName());
+        }
+
+        boolean managedTable = ManagedTableListener.isManagedTable(this, table);
+        Table hiveTable =
+                HiveTableUtil.instantiateHiveTable(
+                        tablePath, table, hiveConfWrapper.conf(), managedTable);
+        Method writeObjMethod =
+                hiveTable
+                        .getClass()
+                        .getDeclaredMethod("writeObject", new Class[] {ObjectOutputStream.class});
+        writeObjMethod.setAccessible(true);
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        ObjectOutputStream objectOutputStream = new ObjectOutputStream(byteArrayOutputStream);
+        writeObjMethod.invoke(hiveTable, objectOutputStream);
+        objectOutputStream.flush();
+        byteArrayOutputStream.flush();
+        return byteArrayOutputStream.toByteArray();
+    }
+
+    public CatalogBaseTable deser(ObjectPath tablePath, byte[] data) throws Exception {
+        Table newTable =
+                org.apache.hadoop.hive.ql.metadata.Table.getEmptyTable(
+                        tablePath.getDatabaseName(), tablePath.getObjectName());
+        Method writeObjMethod =
+                newTable.getClass()
+                        .getDeclaredMethod("readObject", new Class[] {ObjectInputStream.class});
+        writeObjMethod.setAccessible(true);
+        ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(data);
+        ObjectInputStream objectInputStream = new ObjectInputStream(byteArrayInputStream);
+        writeObjMethod.invoke(newTable, objectInputStream);
+        return instantiateCatalogTable(newTable);
     }
 
     @Override
@@ -607,7 +659,11 @@ public class HiveCatalog extends AbstractCatalog {
                 // the alter operation isn't encoded as properties
                 hiveTable =
                         HiveTableUtil.alterTableViaCatalogBaseTable(
-                                tablePath, newCatalogTable, hiveTable, hiveConf, false);
+                                tablePath,
+                                newCatalogTable,
+                                hiveTable,
+                                hiveConfWrapper.conf(),
+                                false);
             } else {
                 alterTableViaProperties(
                         op,
@@ -623,7 +679,7 @@ public class HiveCatalog extends AbstractCatalog {
                             tablePath,
                             newCatalogTable,
                             hiveTable,
-                            hiveConf,
+                            hiveConfWrapper.conf(),
                             ManagedTableListener.isManagedTable(this, newCatalogTable));
         }
         if (isHiveTable) {
@@ -745,7 +801,9 @@ public class HiveCatalog extends AbstractCatalog {
 
         if (isHiveTable) {
             // Table schema
-            tableSchema = HiveTableUtil.createTableSchema(hiveConf, hiveTable, client, hiveShim);
+            tableSchema =
+                    HiveTableUtil.createTableSchema(
+                            hiveConfWrapper.conf(), hiveTable, client, hiveShim);
 
             if (!hiveTable.getPartitionKeys().isEmpty()) {
                 partitionKeys = getFieldNames(hiveTable.getPartitionKeys());
@@ -969,7 +1027,9 @@ public class HiveCatalog extends AbstractCatalog {
         List<String> partColNames = getFieldNames(hiveTable.getPartitionKeys());
         Optional<String> filter =
                 HiveTableUtil.makePartitionFilter(
-                        HiveTableUtil.getNonPartitionFields(hiveConf, hiveTable, hiveShim).size(),
+                        HiveTableUtil.getNonPartitionFields(
+                                        hiveConfWrapper.conf(), hiveTable, hiveShim)
+                                .size(),
                         partColNames,
                         expressions,
                         hiveShim);
@@ -1910,7 +1970,7 @@ public class HiveCatalog extends AbstractCatalog {
                 break;
             case CHANGE_FILE_FORMAT:
                 String newFileFormat = newProps.remove(STORED_AS_FILE_FORMAT);
-                HiveTableUtil.setStorageFormat(sd, newFileFormat, hiveConf);
+                HiveTableUtil.setStorageFormat(sd, newFileFormat, hiveConfWrapper.conf());
                 break;
             case CHANGE_SERDE_PROPS:
                 HiveTableUtil.extractRowFormat(sd, newProps);

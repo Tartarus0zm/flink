@@ -697,4 +697,12 @@ public interface Catalog {
             CatalogColumnStatistics columnStatistics,
             boolean ignoreIfNotExists)
             throws PartitionNotExistException, CatalogException;
+
+    default byte[] ser(ObjectPath tablePath, CatalogBaseTable table) throws Exception {
+        return new byte[0];
+    }
+
+    default CatalogBaseTable deser(ObjectPath tablePath, byte[] data) throws Exception {
+        return null;
+    }
 }

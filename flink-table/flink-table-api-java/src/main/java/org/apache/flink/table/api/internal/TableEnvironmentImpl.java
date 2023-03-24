@@ -24,6 +24,8 @@ import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.runtime.executiongraph.JobStatusHook;
+import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.table.api.CompiledPlan;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.EnvironmentSettings;
@@ -154,6 +156,7 @@ import org.apache.flink.table.operations.utils.OperationTreeBuilder;
 import org.apache.flink.table.resource.ResourceManager;
 import org.apache.flink.table.resource.ResourceType;
 import org.apache.flink.table.resource.ResourceUri;
+import org.apache.flink.table.runtime.CtasJobStatusHook;
 import org.apache.flink.table.sinks.TableSink;
 import org.apache.flink.table.sources.TableSource;
 import org.apache.flink.table.sources.TableSourceValidation;
@@ -165,6 +168,7 @@ import org.apache.flink.table.utils.TableSchemaUtils;
 import org.apache.flink.table.utils.print.PrintStyle;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.FlinkUserCodeClassLoaders;
+import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.MutableURLClassLoader;
 import org.apache.flink.util.Preconditions;
 
@@ -206,6 +210,7 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
     protected final FunctionCatalog functionCatalog;
     protected final Planner planner;
     private final boolean isStreamingMode;
+    private final List<JobStatusHook> jobStatusHooks = new ArrayList<>();
 
     private static final String UNSUPPORTED_QUERY_IN_EXECUTE_SQL_MSG =
             "Unsupported SQL query! executeSql() only accepts a single SQL statement of type "
@@ -846,8 +851,44 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
             // execute CREATE TABLE first for CTAS statements
             if (modify instanceof CreateTableASOperation) {
                 CreateTableASOperation ctasOperation = (CreateTableASOperation) modify;
-                executeInternal(ctasOperation.getCreateTableOperation());
-                mapOperations.add(ctasOperation.toSinkModifyOperation(catalogManager));
+                if (tableConfig.get(TableConfigOptions.TABLE_CTAS_ATOMICITY_ENABLED)) {
+                    CreateTableOperation createTableOperation =
+                            ctasOperation.getCreateTableOperation();
+                    String catalogName = catalogManager.getCurrentCatalog();
+                    if (!ObjectIdentifier.UNKNOWN.equals(
+                            createTableOperation.getTableIdentifier().getCatalogName())) {
+                        catalogName = createTableOperation.getTableIdentifier().getCatalogName();
+                    }
+                    Catalog ctasCatalog = catalogManager.getCatalog(catalogName).get();
+                    if (!InstantiationUtil.isSerializable(ctasCatalog)) {
+                        throw new UnsupportedOperationException(
+                                ctasCatalog.getClass()
+                                        + " not support atomic CTAS, because it can't be serialized!");
+                    }
+                    ResolvedCatalogTable catalogTable =
+                            catalogManager.resolveCatalogTable(
+                                    createTableOperation.getCatalogTable());
+                    CtasJobStatusHook ctasJobStatusHook =
+                            new CtasJobStatusHook(
+                                    ctasCatalog,
+                                    catalogTable,
+                                    createTableOperation.getTableIdentifier().toObjectPath(),
+                                    createTableOperation.isIgnoreIfExists());
+                    // copy to set atomic flag
+                    ResolvedCatalogTable copyedTable = (ResolvedCatalogTable) catalogTable.copy();
+                    copyedTable.getOptions().put("flink.atomic-ctas-table", "true");
+                    mapOperations.add(
+                            ctasOperation.toSinkModifyOperation(
+                                    ContextResolvedTable.permanent(
+                                            createTableOperation.getTableIdentifier(),
+                                            ctasCatalog,
+                                            copyedTable)));
+                    jobStatusHooks.add(ctasJobStatusHook);
+                } else {
+                    // execute CREATE TABLE first for non-atomic CTAS statements
+                    executeInternal(ctasOperation.getCreateTableOperation());
+                    mapOperations.add(ctasOperation.toSinkModifyOperation(catalogManager));
+                }
             } else {
                 mapOperations.add(modify);
             }
@@ -877,6 +918,13 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
         Pipeline pipeline =
                 execEnv.createPipeline(
                         transformations, tableConfig.getConfiguration(), defaultJobName);
+        if (pipeline instanceof StreamGraph) {
+            StreamGraph streamGraph = (StreamGraph) pipeline;
+            for (JobStatusHook jobStatusHook : jobStatusHooks) {
+                streamGraph.registerJobStatusHook(jobStatusHook);
+            }
+            jobStatusHooks.clear();
+        }
         try {
             JobClient jobClient = execEnv.executeAsync(pipeline);
             final List<Column> columns = new ArrayList<>();

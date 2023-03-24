@@ -20,6 +20,7 @@ package org.apache.flink.table.operations;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.table.catalog.CatalogManager;
+import org.apache.flink.table.catalog.ContextResolvedTable;
 import org.apache.flink.table.operations.ddl.CreateTableOperation;
 
 import java.util.Collections;
@@ -54,6 +55,15 @@ public class CreateTableASOperation implements ModifyOperation {
     public SinkModifyOperation toSinkModifyOperation(CatalogManager catalogManager) {
         return new SinkModifyOperation(
                 catalogManager.getTableOrError(createTableOperation.getTableIdentifier()),
+                sinkModifyQuery,
+                sinkModifyStaticPartitions,
+                sinkModifyOverwrite,
+                Collections.emptyMap());
+    }
+
+    public SinkModifyOperation toSinkModifyOperation(ContextResolvedTable contextResolvedTable) {
+        return new SinkModifyOperation(
+                contextResolvedTable,
                 sinkModifyQuery,
                 sinkModifyStaticPartitions,
                 sinkModifyOverwrite,

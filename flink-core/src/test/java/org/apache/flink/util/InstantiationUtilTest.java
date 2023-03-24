@@ -208,6 +208,13 @@ public class InstantiationUtilTest extends TestLogger {
         assertTrue(original.equals(copy));
     }
 
+    @Test
+    public void testSerde() throws Exception {
+        InstantiationUtil.deserializeObject(
+                InstantiationUtil.serializeObject(new SubClass("zm-test")),
+                Thread.currentThread().getContextClassLoader());
+    }
+
     // --------------------------------------------------------------------------------------------
 
     private class TestClass {}
@@ -282,6 +289,27 @@ public class InstantiationUtilTest extends TestLogger {
         public void read(DataInputView in) throws IOException {
             this.aInt = in.readInt();
             this.aLong = in.readLong();
+        }
+    }
+
+    /** test. */
+    public abstract static class ParentClass implements java.io.Serializable {
+        private static final long serialVersionUID = 1L;
+
+        private final boolean isSerializable;
+
+        protected ParentClass(boolean isSerializable) {
+            this.isSerializable = isSerializable;
+        }
+    }
+
+    /** test. */
+    public static final class SubClass extends ParentClass {
+        private final String name;
+
+        public SubClass(String name) {
+            super(false);
+            this.name = name;
         }
     }
 }
