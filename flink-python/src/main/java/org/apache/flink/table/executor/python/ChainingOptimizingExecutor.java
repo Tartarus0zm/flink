@@ -24,11 +24,15 @@ import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.core.execution.JobStatusHook;
 import org.apache.flink.python.PythonOptions;
 import org.apache.flink.python.chain.PythonOperatorChainingOptimizer;
 import org.apache.flink.python.util.PythonConfigUtil;
+import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.table.delegation.Executor;
 import org.apache.flink.util.Preconditions;
+
+import javax.annotation.Nullable;
 
 import java.util.List;
 
@@ -61,6 +65,22 @@ public class ChainingOptimizingExecutor implements Executor {
 
         PythonConfigUtil.setPartitionCustomOperatorNumPartitions(chainedTransformations);
         return executor.createPipeline(chainedTransformations, configuration, defaultJobName);
+    }
+
+    @Override
+    public Pipeline createPipeline(
+            List<Transformation<?>> transformations,
+            ReadableConfig tableConfiguration,
+            @Nullable String defaultJobName,
+            List<JobStatusHook> jobStatusHookList) {
+        Pipeline pipeline = createPipeline(transformations, tableConfiguration, defaultJobName);
+        if (pipeline instanceof StreamGraph) {
+            StreamGraph streamGraph = (StreamGraph) pipeline;
+            for (JobStatusHook hook : jobStatusHookList) {
+                streamGraph.registerJobStatusHook(hook);
+            }
+        }
+        return pipeline;
     }
 
     @Override

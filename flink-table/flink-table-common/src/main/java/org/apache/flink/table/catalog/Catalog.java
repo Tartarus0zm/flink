@@ -19,6 +19,7 @@
 package org.apache.flink.table.catalog;
 
 import org.apache.flink.annotation.PublicEvolving;
+import org.apache.flink.core.execution.JobStatusHook;
 import org.apache.flink.table.catalog.exceptions.CatalogException;
 import org.apache.flink.table.catalog.exceptions.DatabaseAlreadyExistException;
 import org.apache.flink.table.catalog.exceptions.DatabaseNotEmptyException;
@@ -721,4 +722,34 @@ public interface Catalog {
             CatalogColumnStatistics columnStatistics,
             boolean ignoreIfNotExists)
             throws PartitionNotExistException, CatalogException;
+
+    /**
+     * Create a {@link TwoPhaseCatalogTable} that provided transaction abstraction. {@link
+     * TwoPhaseCatalogTable} will be combined with {@link JobStatusHook} to achieve atomicity
+     * support in the Flink framework. Default returns empty, indicating that atomic operations are
+     * not supported, then using non-atomic implementations.
+     *
+     * <p>The framework will make sure to call this method with fully validated {@link
+     * ResolvedCatalogTable}.
+     *
+     * @param tablePath path of the table to be created
+     * @param table the table definition
+     * @param ignoreIfExists flag to specify behavior when a table or view already exists at the
+     *     given path: if set to false, it throws a TableAlreadyExistException, if set to true, do
+     *     nothing.
+     * @param isStreamingMode A flag that tells if the current table is in stream mode, Different
+     *     modes can have different implementations of atomicity support.
+     * @return {@link TwoPhaseCatalogTable} that can be serialized and provides atomic operations
+     * @throws TableAlreadyExistException if table already exists and ignoreIfExists is false
+     * @throws DatabaseNotExistException if the database in tablePath doesn't exist
+     * @throws CatalogException in case of any runtime exception
+     */
+    default Optional<TwoPhaseCatalogTable> twoPhaseCatalogTable(
+            ObjectPath tablePath,
+            CatalogBaseTable table,
+            boolean ignoreIfExists,
+            boolean isStreamingMode)
+            throws TableAlreadyExistException, DatabaseNotExistException, CatalogException {
+        return Optional.empty();
+    }
 }

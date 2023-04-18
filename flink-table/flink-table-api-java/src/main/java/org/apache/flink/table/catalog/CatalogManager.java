@@ -975,6 +975,36 @@ public final class CatalogManager {
         return new ResolvedCatalogTable(table, resolvedSchema);
     }
 
+    public ResolvedCatalogTable resolveCatalogTable(
+            CatalogTable table, TwoPhaseCatalogTable twoPhaseCatalogTable) {
+        Preconditions.checkNotNull(schemaResolver, "Schema resolver is not initialized.");
+        if (table instanceof ResolvedCatalogTable) {
+            return (ResolvedCatalogTable) table;
+        }
+
+        final ResolvedSchema resolvedSchema = table.getUnresolvedSchema().resolve(schemaResolver);
+
+        // Validate partition keys are included in physical columns
+        final List<String> physicalColumns =
+                resolvedSchema.getColumns().stream()
+                        .filter(Column::isPhysical)
+                        .map(Column::getName)
+                        .collect(Collectors.toList());
+        table.getPartitionKeys()
+                .forEach(
+                        partitionKey -> {
+                            if (!physicalColumns.contains(partitionKey)) {
+                                throw new ValidationException(
+                                        String.format(
+                                                "Invalid partition key '%s'. A partition key must "
+                                                        + "reference a physical column in the schema. "
+                                                        + "Available columns are: %s",
+                                                partitionKey, physicalColumns));
+                            }
+                        });
+        return new ResolvedCatalogTable(twoPhaseCatalogTable, resolvedSchema);
+    }
+
     /** Resolves a {@link CatalogView} to a validated {@link ResolvedCatalogView}. */
     public ResolvedCatalogView resolveCatalogView(CatalogView view) {
         Preconditions.checkNotNull(schemaResolver, "Schema resolver is not initialized.");

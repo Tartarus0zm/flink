@@ -19,7 +19,12 @@
 package org.apache.flink.table.operations;
 
 import org.apache.flink.annotation.Internal;
+import org.apache.flink.table.catalog.Catalog;
 import org.apache.flink.table.catalog.CatalogManager;
+import org.apache.flink.table.catalog.CatalogTable;
+import org.apache.flink.table.catalog.ContextResolvedTable;
+import org.apache.flink.table.catalog.ObjectIdentifier;
+import org.apache.flink.table.catalog.TwoPhaseCatalogTable;
 import org.apache.flink.table.operations.ddl.CreateTableOperation;
 
 import java.util.Collections;
@@ -54,6 +59,24 @@ public class CreateTableASOperation implements ModifyOperation {
     public SinkModifyOperation toSinkModifyOperation(CatalogManager catalogManager) {
         return new SinkModifyOperation(
                 catalogManager.getTableOrError(createTableOperation.getTableIdentifier()),
+                sinkModifyQuery,
+                sinkModifyStaticPartitions,
+                null, // targetColumns
+                sinkModifyOverwrite,
+                Collections.emptyMap());
+    }
+
+    public SinkModifyOperation toSinkModifyOperation(
+            ObjectIdentifier tableIdentifier,
+            CatalogTable catalogTable,
+            TwoPhaseCatalogTable twoPhaseCatalogTable,
+            Catalog catalog,
+            CatalogManager catalogManager) {
+        return new SinkModifyOperation(
+                ContextResolvedTable.permanent(
+                        tableIdentifier,
+                        catalog,
+                        catalogManager.resolveCatalogTable(catalogTable, twoPhaseCatalogTable)),
                 sinkModifyQuery,
                 sinkModifyStaticPartitions,
                 null, // targetColumns

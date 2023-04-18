@@ -24,7 +24,9 @@ import org.apache.flink.api.java.hadoop.mapred.utils.HadoopUtils;
 import org.apache.flink.connectors.hive.FlinkHiveException;
 import org.apache.flink.connectors.hive.HiveDynamicTableFactory;
 import org.apache.flink.connectors.hive.HiveTableFactory;
+import org.apache.flink.connectors.hive.JobConfWrapper;
 import org.apache.flink.connectors.hive.util.HivePartitionUtils;
+import org.apache.flink.connectors.hive.util.JobConfUtils;
 import org.apache.flink.table.api.constraints.UniqueConstraint;
 import org.apache.flink.table.catalog.AbstractCatalog;
 import org.apache.flink.table.catalog.CatalogBaseTable;
@@ -44,6 +46,7 @@ import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.catalog.ResolvedCatalogBaseTable;
 import org.apache.flink.table.catalog.ResolvedCatalogTable;
 import org.apache.flink.table.catalog.ResolvedSchema;
+import org.apache.flink.table.catalog.TwoPhaseCatalogTable;
 import org.apache.flink.table.catalog.exceptions.CatalogException;
 import org.apache.flink.table.catalog.exceptions.DatabaseAlreadyExistException;
 import org.apache.flink.table.catalog.exceptions.DatabaseNotEmptyException;
@@ -1818,6 +1821,51 @@ public class HiveCatalog extends AbstractCatalog {
     @Override
     public boolean supportsManagedTable() {
         return true;
+    }
+
+    @Override
+    public Optional<TwoPhaseCatalogTable> twoPhaseCatalogTable(
+            ObjectPath tablePath,
+            CatalogBaseTable table,
+            boolean ignoreIfExists,
+            boolean isStreamingMode)
+            throws TableAlreadyExistException, DatabaseNotExistException, CatalogException {
+
+        if (isStreamingMode) {
+            // HiveCatalog does not support atomicity semantics in stream mode
+            return Optional.empty();
+        }
+
+        checkNotNull(tablePath, "tablePath cannot be null");
+        checkArgument(table instanceof ResolvedCatalogBaseTable, "table should be resolved");
+
+        ResolvedCatalogBaseTable<?> resolvedTable = (ResolvedCatalogBaseTable<?>) table;
+        if (!databaseExists(tablePath.getDatabaseName())) {
+            throw new DatabaseNotExistException(getName(), tablePath.getDatabaseName());
+        }
+        if (!ignoreIfExists && tableExists(tablePath)) {
+            throw new TableAlreadyExistException(getName(), tablePath);
+        }
+
+        boolean managedTable = ManagedTableListener.isManagedTable(this, resolvedTable);
+
+        Table hiveTable =
+                HiveTableUtil.instantiateHiveTable(
+                        tablePath, resolvedTable, hiveConf, managedTable);
+
+        TwoPhaseCatalogTable twoPhaseCatalogTable =
+                new HiveTwoPhaseCatalogTable(
+                        getHiveVersion(),
+                        new JobConfWrapper(JobConfUtils.createJobConfWithCredentials(hiveConf)),
+                        tablePath,
+                        hiveTable,
+                        table.getOptions(),
+                        table.getComment(),
+                        table.getDescription().orElse(null),
+                        table.getDetailedDescription().orElse(null),
+                        ignoreIfExists);
+
+        return Optional.of(twoPhaseCatalogTable);
     }
 
     @Internal

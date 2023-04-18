@@ -197,6 +197,16 @@ public class TableConfigOptions {
                     .withDescription(
                             "Local directory that is used by planner for storing downloaded resources.");
 
+    @Documentation.TableOption(execMode = Documentation.ExecMode.BATCH_STREAMING)
+    public static final ConfigOption<Boolean> TABLE_CTAS_ATOMICITY_ENABLED =
+            key("table.ctas.atomicity-enabled")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription(
+                            "Specifies if the create table as select operation is executed atomically. "
+                                    + "By default, the operation is non-atomic. The target table is created in Client side, and it will not be dropped even though the job fails or is cancelled. "
+                                    + "If set this option to true, the target table is created in JM side, it also will be dropped when the job fails or is cancelled.");
+
     // ------------------------------------------------------------------------------------------
     // Enum option types
     // ------------------------------------------------------------------------------------------

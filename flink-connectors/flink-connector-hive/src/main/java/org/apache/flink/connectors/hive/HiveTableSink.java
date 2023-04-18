@@ -62,6 +62,7 @@ import org.apache.flink.table.catalog.ObjectIdentifier;
 import org.apache.flink.table.catalog.ResolvedCatalogTable;
 import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.catalog.exceptions.CatalogException;
+import org.apache.flink.table.catalog.hive.HiveTwoPhaseCatalogTable;
 import org.apache.flink.table.catalog.hive.client.HiveMetastoreClientFactory;
 import org.apache.flink.table.catalog.hive.client.HiveMetastoreClientWrapper;
 import org.apache.flink.table.catalog.hive.client.HiveShim;
@@ -88,6 +89,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.ql.exec.Utilities;
@@ -102,6 +104,8 @@ import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -245,34 +249,56 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
                                 CatalogPropertiesUtil.FLINK_PROPERTY_PREFIX + IS_INSERT_DIRECTORY,
                                 "false"));
         boolean isToLocal = false;
-        if (isInsertDirectory) {
-            isToLocal =
-                    Boolean.parseBoolean(
-                            options.getOrDefault(
-                                    CatalogPropertiesUtil.FLINK_PROPERTY_PREFIX
-                                            + IS_TO_LOCAL_DIRECTORY,
-                                    "false"));
-            sd =
-                    org.apache.hadoop.hive.ql.metadata.Table.getEmptyTable(
-                                    identifier.getDatabaseName(), identifier.getObjectName())
-                            .getSd();
-            HiveConf hiveConf = HiveConfUtils.create(jobConf);
-            HiveTableUtil.setDefaultStorageFormatForDirectory(sd, HiveConfUtils.create(jobConf));
-            HiveTableUtil.extractRowFormat(sd, catalogTable.getOptions());
-            HiveTableUtil.extractStoredAs(sd, catalogTable.getOptions(), hiveConf);
-            HiveTableUtil.extractLocation(sd, catalogTable.getOptions());
-            tableProps.putAll(sd.getSerdeInfo().getParameters());
-            tableProps.putAll(catalogTable.getOptions());
-        } else {
-            try (HiveMetastoreClientWrapper client =
-                    HiveMetastoreClientFactory.create(HiveConfUtils.create(jobConf), hiveVersion)) {
-                Table table =
-                        client.getTable(identifier.getDatabaseName(), identifier.getObjectName());
+        boolean isAtomicCtas = catalogTable.getOrigin() instanceof HiveTwoPhaseCatalogTable;
+        try (HiveMetastoreClientWrapper client =
+                HiveMetastoreClientFactory.create(HiveConfUtils.create(jobConf), hiveVersion)) {
+            if (isInsertDirectory) {
+                isToLocal =
+                        Boolean.parseBoolean(
+                                options.getOrDefault(
+                                        CatalogPropertiesUtil.FLINK_PROPERTY_PREFIX
+                                                + IS_TO_LOCAL_DIRECTORY,
+                                        "false"));
+                sd =
+                        org.apache.hadoop.hive.ql.metadata.Table.getEmptyTable(
+                                        identifier.getDatabaseName(), identifier.getObjectName())
+                                .getSd();
+                HiveConf hiveConf = HiveConfUtils.create(jobConf);
+                HiveTableUtil.setDefaultStorageFormatForDirectory(
+                        sd, HiveConfUtils.create(jobConf));
+                HiveTableUtil.extractRowFormat(sd, catalogTable.getOptions());
+                HiveTableUtil.extractStoredAs(sd, catalogTable.getOptions(), hiveConf);
+                HiveTableUtil.extractLocation(sd, catalogTable.getOptions());
+                tableProps.putAll(sd.getSerdeInfo().getParameters());
+                tableProps.putAll(catalogTable.getOptions());
+            } else {
+                Table table = null;
+                if (isAtomicCtas) {
+                    Database database = client.getDatabase(identifier.getDatabaseName());
+                    try {
+                        table = ((HiveTwoPhaseCatalogTable) catalogTable.getOrigin()).getTable();
+                        table.getSd()
+                                .setLocation(
+                                        new URI(database.getLocationUri()).getPath()
+                                                + "/"
+                                                + identifier.getObjectName());
+                    } catch (URISyntaxException e) {
+                        throw new FlinkHiveException("Failed to parse ctas table path", e);
+                    }
+                } else {
+                    table =
+                            client.getTable(
+                                    identifier.getDatabaseName(), identifier.getObjectName());
+                }
                 sd = table.getSd();
                 tableProps = HiveReflectionUtils.getTableMetadata(hiveShim, table);
-            } catch (TException e) {
-                throw new CatalogException("Failed to query Hive metaStore", e);
             }
+        } catch (TException e) {
+            throw new CatalogException("Failed to query Hive metaStore", e);
+        }
+
+        if (isAtomicCtas && isToLocal) {
+            throw new FlinkHiveException("atomic ctas not support write to local");
         }
 
         try {
@@ -341,7 +367,8 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
                         isToLocal,
                         overwrite,
                         sinkParallelism,
-                        sinkParallelismConfigured);
+                        sinkParallelismConfigured,
+                        isAtomicCtas);
             } else {
                 if (overwrite) {
                     throw new IllegalStateException("Streaming mode not support overwrite.");
@@ -377,12 +404,16 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
             boolean isToLocal,
             boolean overwrite,
             int sinkParallelism,
-            boolean sinkParallelismConfigured)
+            boolean sinkParallelismConfigured,
+            boolean isAtomicCtas)
             throws IOException {
         org.apache.flink.configuration.Configuration conf =
                 new org.apache.flink.configuration.Configuration();
         catalogTable.getOptions().forEach(conf::setString);
         boolean autoCompaction = conf.getBoolean(FileSystemConnectorOptions.AUTO_COMPACTION);
+        if (isAtomicCtas && autoCompaction) {
+            throw new FlinkHiveException("atomic ctas not support merge file");
+        }
         if (autoCompaction) {
             Optional<Integer> compactParallelismOptional =
                     conf.getOptional(FileSystemConnectorOptions.COMPACTION_PARALLELISM);
@@ -413,7 +444,8 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
                     sinkParallelism,
                     compactParallelism,
                     sinkParallelismConfigured,
-                    compactParallelismConfigured);
+                    compactParallelismConfigured,
+                    isAtomicCtas);
         } else {
             return createBatchNoCompactSink(
                     dataStream,
@@ -424,7 +456,8 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
                     stagingParentDir,
                     isToLocal,
                     sinkParallelism,
-                    sinkParallelismConfigured);
+                    sinkParallelismConfigured,
+                    isAtomicCtas);
         }
     }
 
@@ -442,7 +475,8 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
             final int sinkParallelism,
             final int compactParallelism,
             boolean sinkParallelismConfigured,
-            boolean compactParallelismConfigured)
+            boolean compactParallelismConfigured,
+            boolean isAtomicCtas)
             throws IOException {
         String[] partitionColumns = getPartitionKeyArray();
         org.apache.flink.configuration.Configuration conf =
@@ -581,7 +615,8 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
             String stagingParentDir,
             boolean isToLocal,
             final int sinkParallelism,
-            boolean sinkParallelismConfigured)
+            boolean sinkParallelismConfigured,
+            boolean isAtomicCtas)
             throws IOException {
         org.apache.flink.configuration.Configuration conf =
                 new org.apache.flink.configuration.Configuration();
@@ -595,22 +630,41 @@ public class HiveTableSink implements DynamicTableSink, SupportsPartitioning, Su
                         resolvedSchema.getColumnDataTypes().toArray(new DataType[0]),
                         getPartitionKeyArray()));
         builder.setDynamicGrouped(dynamicGrouping);
-        builder.setPartitionColumns(getPartitionKeyArray());
-        builder.setFileSystemFactory(fsFactory());
+        String[] partitionColumns = getPartitionKeyArray();
+        builder.setPartitionColumns(partitionColumns);
+        HadoopFileSystemFactory fileSystemFactory = fsFactory();
+        builder.setFileSystemFactory(fileSystemFactory);
         builder.setFormatFactory(new HiveOutputFormatFactory(recordWriterFactory));
         builder.setMetaStoreFactory(metaStoreFactory);
         builder.setOverwrite(overwrite);
         builder.setIsToLocal(isToLocal);
         builder.setStaticPartitions(staticPartitionSpec);
-        builder.setTempPath(
-                new org.apache.flink.core.fs.Path(toStagingDir(stagingParentDir, jobConf)));
+        org.apache.flink.core.fs.Path tmpPath =
+                new org.apache.flink.core.fs.Path(toStagingDir(stagingParentDir, jobConf));
+        builder.setTempPath(tmpPath);
         builder.setOutputFileConfig(fileNaming);
         builder.setIdentifier(identifier);
-        builder.setPartitionCommitPolicyFactory(
+        PartitionCommitPolicyFactory partitionCommitPolicyFactory =
                 new PartitionCommitPolicyFactory(
                         conf.get(HiveOptions.SINK_PARTITION_COMMIT_POLICY_KIND),
                         conf.get(HiveOptions.SINK_PARTITION_COMMIT_POLICY_CLASS),
-                        conf.get(HiveOptions.SINK_PARTITION_COMMIT_SUCCESS_FILE_NAME)));
+                        conf.get(HiveOptions.SINK_PARTITION_COMMIT_SUCCESS_FILE_NAME));
+        builder.setPartitionCommitPolicyFactory(partitionCommitPolicyFactory);
+
+        if (isAtomicCtas) {
+            builder.setIsTwoPhaseCatalogTable(true);
+            HiveTwoPhaseCatalogTable hiveTwoPhaseCatalogTable =
+                    (HiveTwoPhaseCatalogTable) catalogTable.getOrigin();
+            hiveTwoPhaseCatalogTable.setFsFactory(fileSystemFactory);
+            hiveTwoPhaseCatalogTable.setMsFactory(metaStoreFactory);
+            hiveTwoPhaseCatalogTable.setTmpPath(tmpPath);
+            hiveTwoPhaseCatalogTable.setOverwrite(overwrite);
+            hiveTwoPhaseCatalogTable.setIdentifier(identifier);
+            hiveTwoPhaseCatalogTable.setDynamicGrouped(dynamicGrouping);
+            hiveTwoPhaseCatalogTable.setPartitionColumns(partitionColumns);
+            hiveTwoPhaseCatalogTable.setStaticPartitions(staticPartitionSpec);
+            hiveTwoPhaseCatalogTable.setPartitionCommitPolicyFactory(partitionCommitPolicyFactory);
+        }
         return BatchSink.createBatchNoCompactSink(
                 dataStream, converter, builder.build(), sinkParallelism, sinkParallelismConfigured);
     }

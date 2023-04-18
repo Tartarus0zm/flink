@@ -726,6 +726,30 @@ class HiveTableSinkITCase {
         }
     }
 
+    @Test
+    public void testAtomicCtas() throws Exception {
+        TableEnvironment tEnv = HiveTestUtils.createTableEnvInBatchMode(SqlDialect.HIVE);
+        tEnv.registerCatalog(hiveCatalog.getName(), hiveCatalog);
+        tEnv.useCatalog(hiveCatalog.getName());
+        tEnv.executeSql(
+                "create table test_source_table ("
+                        + "name string, "
+                        + "age int, "
+                        + "address string)");
+
+        tEnv.executeSql("insert into test_source_table values ('zm', 18, 'beijing')").await();
+
+        tEnv.executeSql(
+                        "create table test_atomic_ctas_table as select name, age from test_source_table")
+                .await();
+
+        assertBatch("test_atomic_ctas_table", Arrays.asList("+I[zm, 18]"));
+
+        CatalogTableStatistics tableStatistics =
+                hiveCatalog.getTableStatistics(new ObjectPath("default", "test_atomic_ctas_table"));
+        assertThat(tableStatistics).isEqualTo(new CatalogTableStatistics(-1, 1, 6, -1));
+    }
+
     private long getPathSize(java.nio.file.Path path) throws IOException {
         String defaultSuccessFileName =
                 HiveOptions.SINK_PARTITION_COMMIT_SUCCESS_FILE_NAME.defaultValue();
