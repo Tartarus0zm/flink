@@ -24,6 +24,7 @@ import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.core.execution.JobStatusHook;
 import org.apache.flink.table.api.CompiledPlan;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.EnvironmentSettings;
@@ -56,17 +57,23 @@ import org.apache.flink.table.catalog.ObjectIdentifier;
 import org.apache.flink.table.catalog.QueryOperationCatalogView;
 import org.apache.flink.table.catalog.ResolvedCatalogTable;
 import org.apache.flink.table.catalog.ResolvedSchema;
+import org.apache.flink.table.catalog.StagedTable;
 import org.apache.flink.table.catalog.UnresolvedIdentifier;
+import org.apache.flink.table.connector.sink.DynamicTableSink;
+import org.apache.flink.table.connector.sink.abilities.SupportsStaging;
 import org.apache.flink.table.delegation.Executor;
 import org.apache.flink.table.delegation.ExecutorFactory;
 import org.apache.flink.table.delegation.ExtendedOperationExecutor;
 import org.apache.flink.table.delegation.InternalPlan;
 import org.apache.flink.table.delegation.Parser;
 import org.apache.flink.table.delegation.Planner;
+import org.apache.flink.table.execution.CtasJobStatusHook;
 import org.apache.flink.table.expressions.ApiExpressionUtils;
 import org.apache.flink.table.expressions.Expression;
+import org.apache.flink.table.factories.DynamicTableSinkFactory;
 import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.factories.PlannerFactoryUtil;
+import org.apache.flink.table.factories.TableFactoryUtil;
 import org.apache.flink.table.functions.ScalarFunction;
 import org.apache.flink.table.functions.UserDefinedFunction;
 import org.apache.flink.table.functions.UserDefinedFunctionHelper;
@@ -90,6 +97,7 @@ import org.apache.flink.table.operations.TableSourceQueryOperation;
 import org.apache.flink.table.operations.command.ExecutePlanOperation;
 import org.apache.flink.table.operations.ddl.AnalyzeTableOperation;
 import org.apache.flink.table.operations.ddl.CompilePlanOperation;
+import org.apache.flink.table.operations.ddl.CreateTableOperation;
 import org.apache.flink.table.operations.utils.OperationTreeBuilder;
 import org.apache.flink.table.resource.ResourceManager;
 import org.apache.flink.table.resource.ResourceUri;
@@ -113,6 +121,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -144,6 +153,7 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
     protected final Planner planner;
     private final boolean isStreamingMode;
     private final ExecutableOperation.Context operationCtx;
+    private final List<JobStatusHook> jobStatusHookList = new LinkedList<>();
 
     private static final String UNSUPPORTED_QUERY_IN_EXECUTE_SQL_MSG =
             "Unsupported SQL query! executeSql() only accepts a single SQL statement of type "
@@ -778,8 +788,60 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
             // execute CREATE TABLE first for CTAS statements
             if (modify instanceof CreateTableASOperation) {
                 CreateTableASOperation ctasOperation = (CreateTableASOperation) modify;
-                executeInternal(ctasOperation.getCreateTableOperation());
-                mapOperations.add(ctasOperation.toSinkModifyOperation(catalogManager));
+                try {
+                    CreateTableOperation createTableOperation =
+                            ctasOperation.getCreateTableOperation();
+                    String catalogName = catalogManager.getCurrentCatalog();
+                    ObjectIdentifier tableIdentifier = createTableOperation.getTableIdentifier();
+                    if (!ObjectIdentifier.UNKNOWN.equals(tableIdentifier.getCatalogName())) {
+                        catalogName = tableIdentifier.getCatalogName();
+                    }
+                    Catalog ctasCatalog = catalogManager.getCatalog(catalogName).get();
+                    ResolvedCatalogTable catalogTable =
+                            catalogManager.resolveCatalogTable(
+                                    createTableOperation.getCatalogTable());
+
+                    Optional<DynamicTableSink> dynamicTableSinkOptional =
+                            getDynamicTableSink(
+                                    catalogTable,
+                                    tableIdentifier,
+                                    createTableOperation.isTemporary(),
+                                    catalogManager.getCatalog(catalogName));
+                    if (dynamicTableSinkOptional.isPresent()
+                            && dynamicTableSinkOptional.get() instanceof SupportsStaging) {
+                        DynamicTableSink dynamicTableSink = dynamicTableSinkOptional.get();
+                        StagedTable stagedTable =
+                                ((SupportsStaging) dynamicTableSink)
+                                        .applyStaging(
+                                                new SupportsStaging.StagingContext() {
+                                                    @Override
+                                                    public SupportsStaging.StagingPurpose
+                                                            getStagingPurpose() {
+                                                        if (createTableOperation
+                                                                .isIgnoreIfExists()) {
+                                                            return SupportsStaging.StagingPurpose
+                                                                    .CREATE_TABLE_AS_IF_NOT_EXISTS;
+                                                        }
+                                                        return SupportsStaging.StagingPurpose
+                                                                .CREATE_TABLE_AS;
+                                                    }
+                                                });
+                        CtasJobStatusHook ctasJobStatusHook = new CtasJobStatusHook(stagedTable);
+                        mapOperations.add(
+                                ctasOperation.toStagedSinkModifyOperation(
+                                        createTableOperation.getTableIdentifier(),
+                                        catalogTable,
+                                        ctasCatalog,
+                                        dynamicTableSink));
+                        jobStatusHookList.add(ctasJobStatusHook);
+                    } else {
+                        // execute CREATE TABLE first for non-atomic CTAS statements
+                        executeInternal(ctasOperation.getCreateTableOperation());
+                        mapOperations.add(ctasOperation.toSinkModifyOperation(catalogManager));
+                    }
+                } catch (Exception e) {
+                    throw new TableException("Failed to execute atomic ctas statement ", e);
+                }
             } else {
                 boolean isRowLevelModification = isRowLevelModification(modify);
                 if (isRowLevelModification) {
@@ -819,6 +881,50 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
         return result;
     }
 
+    private Optional<DynamicTableSink> getDynamicTableSink(
+            ResolvedCatalogTable resolvedCatalogTable,
+            ObjectIdentifier tableIdentifier,
+            boolean isTemporaryTable,
+            Optional<Catalog> optionalCatalog) {
+        if (!TableFactoryUtil.isLegacyConnectorOptions(
+                catalogManager.getCatalog(tableIdentifier.getCatalogName()).orElse(null),
+                tableConfig,
+                isStreamingMode,
+                tableIdentifier,
+                resolvedCatalogTable,
+                isTemporaryTable)) {
+            DynamicTableSinkFactory dynamicTableSinkFactory = null;
+
+            if (optionalCatalog.isPresent()
+                    && optionalCatalog.get().getFactory().isPresent()
+                    && optionalCatalog.get().getFactory().get()
+                            instanceof DynamicTableSinkFactory) {
+                // try get from catalog
+                dynamicTableSinkFactory =
+                        (DynamicTableSinkFactory) optionalCatalog.get().getFactory().get();
+            }
+
+            if (dynamicTableSinkFactory == null) {
+                Optional<DynamicTableSinkFactory> factoryFromModule =
+                        moduleManager.getFactory((Module::getTableSinkFactory));
+                // then try get from module
+                dynamicTableSinkFactory = factoryFromModule.orElse(null);
+            }
+            // create table dynamic table sink
+            DynamicTableSink tableSink =
+                    FactoryUtil.createDynamicTableSink(
+                            dynamicTableSinkFactory,
+                            tableIdentifier,
+                            resolvedCatalogTable,
+                            Collections.emptyMap(),
+                            tableConfig,
+                            resourceManager.getUserClassLoader(),
+                            isTemporaryTable);
+            return Optional.of(tableSink);
+        }
+        return Optional.empty();
+    }
+
     private TableResultInternal executeInternal(
             DeleteFromFilterOperation deleteFromFilterOperation) {
         Optional<Long> rows =
@@ -843,7 +949,10 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
         // We pass only the configuration to avoid reconfiguration with the rootConfiguration
         Pipeline pipeline =
                 execEnv.createPipeline(
-                        transformations, tableConfig.getConfiguration(), defaultJobName);
+                        transformations,
+                        tableConfig.getConfiguration(),
+                        defaultJobName,
+                        jobStatusHookList);
         try {
             JobClient jobClient = execEnv.executeAsync(pipeline);
             final List<Column> columns = new ArrayList<>();

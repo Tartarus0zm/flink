@@ -65,6 +65,7 @@ public class FileSystemOutputFormat<T>
     private final OutputFileConfig outputFileConfig;
     private final ObjectIdentifier identifier;
     private final PartitionCommitPolicyFactory partitionCommitPolicyFactory;
+    private final boolean isStagedTable;
 
     private transient PartitionWriter<T> writer;
     private transient Configuration parameters;
@@ -82,7 +83,8 @@ public class FileSystemOutputFormat<T>
             PartitionComputer<T> computer,
             OutputFileConfig outputFileConfig,
             ObjectIdentifier identifier,
-            PartitionCommitPolicyFactory partitionCommitPolicyFactory) {
+            PartitionCommitPolicyFactory partitionCommitPolicyFactory,
+            boolean isStagedTable) {
         this.fsFactory = fsFactory;
         this.msFactory = msFactory;
         this.overwrite = overwrite;
@@ -96,10 +98,14 @@ public class FileSystemOutputFormat<T>
         this.outputFileConfig = outputFileConfig;
         this.identifier = identifier;
         this.partitionCommitPolicyFactory = partitionCommitPolicyFactory;
+        this.isStagedTable = isStagedTable;
     }
 
     @Override
     public void finalizeGlobal(FinalizationContext context) {
+        if (isStagedTable) {
+            return;
+        }
         try {
             List<PartitionCommitPolicy> policies = Collections.emptyList();
             if (partitionCommitPolicyFactory != null) {
@@ -217,6 +223,7 @@ public class FileSystemOutputFormat<T>
 
         private ObjectIdentifier identifier;
         private PartitionCommitPolicyFactory partitionCommitPolicyFactory;
+        private boolean isStagedTable = false;
 
         public Builder<T> setPartitionColumns(String[] partitionColumns) {
             this.partitionColumns = partitionColumns;
@@ -284,6 +291,11 @@ public class FileSystemOutputFormat<T>
             return this;
         }
 
+        public Builder<T> stagedTable(boolean isStagedTable) {
+            this.isStagedTable = isStagedTable;
+            return this;
+        }
+
         public FileSystemOutputFormat<T> build() {
             checkNotNull(partitionColumns, "partitionColumns should not be null");
             checkNotNull(formatFactory, "formatFactory should not be null");
@@ -304,7 +316,8 @@ public class FileSystemOutputFormat<T>
                     computer,
                     outputFileConfig,
                     identifier,
-                    partitionCommitPolicyFactory);
+                    partitionCommitPolicyFactory,
+                    isStagedTable);
         }
     }
 }
